@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub Repo Visualizer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      color: #e0e0e0;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    #ui-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      background: linear-gradient(180deg, rgba(10,10,26,0.95) 0%, rgba(10,10,26,0.7) 80%, transparent 100%);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    #ui-overlay h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #7c8aff;
+      white-space: nowrap;
+    }
+
+    #repo-input {
+      flex: 1;
+      max-width: 500px;
+      padding: 10px 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(124,138,255,0.3);
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #repo-input:focus { border-color: #7c8aff; }
+    #repo-input::placeholder { color: rgba(255,255,255,0.3); }
+
+    #load-btn {
+      padding: 10px 24px;
+      background: #7c8aff;
+      color: #0a0a1a;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #load-btn:hover { background: #9aa4ff; transform: translateY(-1px); }
+    #load-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    #version-tabs {
+      display: flex;
+      gap: 4px;
+      margin-left: auto;
+    }
+    .tab {
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      color: rgba(255,255,255,0.5);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab:hover { background: rgba(124,138,255,0.15); color: #7c8aff; }
+    .tab.active { background: rgba(124,138,255,0.2); border-color: #7c8aff; color: #7c8aff; }
+    .tab.locked { opacity: 0.3; cursor: not-allowed; }
+
+    #canvas-container { width: 100%; height: 100vh; }
+
+    #info-panel {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      background: rgba(10,10,26,0.9);
+      border: 1px solid rgba(124,138,255,0.2);
+      border-radius: 12px;
+      padding: 16px 20px;
+      min-width: 280px;
+      max-width: 400px;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+      display: none;
+    }
+    #info-panel h3 { color: #7c8aff; font-size: 14px; margin-bottom: 8px; }
+    #info-panel p { font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.6; }
+    #info-panel .file-list { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+    #info-panel .file-item {
+      padding: 4px 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+      border-radius: 4px;
+    }
+    #info-panel .file-item:hover { background: rgba(124,138,255,0.1); color: #7c8aff; }
+
+    #status {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      z-index: 100;
+    }
+
+    #loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10,10,26,0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #loading-overlay.visible { display: flex; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid rgba(124,138,255,0.2);
+      border-top-color: #7c8aff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-text { color: rgba(255,255,255,0.6); font-size: 14px; }
+
+    #legend {
+      position: fixed;
+      top: 80px;
+      right: 24px;
+      z-index: 100;
+      font-size: 11px;
+      display: none;
+    }
+    #legend.visible { display: block; }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    .tooltip {
+      position: fixed;
+      background: rgba(10,10,26,0.95);
+      border: 1px solid rgba(124,138,255,0.3);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #e0e0e0;
+      pointer-events: none;
+      z-index: 300;
+      display: none;
+      max-width: 300px;
+    }
+    .tooltip .path { color: #7c8aff; font-size: 11px; }
+    .tooltip .size { color: rgba(255,255,255,0.4); font-size: 10px; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div id="ui-overlay">
+    <h1>Repo Visualizer</h1>
+    <input type="text" id="repo-input" placeholder="owner/repo or GitHub URL" value="AssiamahS/globe">
+    <button id="load-btn" onclick="loadRepo()">Visualize</button>
+    <div id="version-tabs">
+      <button class="tab active" data-version="v1" onclick="switchVersion('v1')">V1 Structure</button>
+      <button class="tab locked" data-version="v2" onclick="switchVersion('v2')">V2 Files</button>
+      <button class="tab locked" data-version="v3" onclick="switchVersion('v3')">V3 Functions</button>
+    </div>
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <div id="info-panel">
+    <h3 id="info-title"></h3>
+    <p id="info-body"></p>
+    <div class="file-list" id="info-files"></div>
+  </div>
+
+  <div id="status">Click a node to inspect</div>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <div id="loading-text">Fetching repository...</div>
+  </div>
+
+  <div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#7c8aff"></div> Directory</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4ecdc4"></div> JavaScript/TS</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff6b9d"></div> HTML/CSS</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffd93d"></div> Config/JSON</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#95e1d3"></div> Markdown</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#c9b1ff"></div> Python</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ff8a5c"></div> Other</div>
+  </div>
+
+  <div class="tooltip" id="tooltip">
+    <div class="path"></div>
+    <div class="size"></div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- State ---
+    let scene, camera, renderer, controls;
+    let repoData = null;
+    let currentVersion = 'v1';
+    let nodeMeshes = [];
+    let edgeLines = [];
+    let labelSprites = [];
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let hoveredNode = null;
+    let selectedNode = null;
+    let fileContents = {};
+
+    const FILE_COLORS = {
+      dir: 0x7c8aff,
+      js: 0x4ecdc4, ts: 0x4ecdc4, jsx: 0x4ecdc4, tsx: 0x4ecdc4, mjs: 0x4ecdc4,
+      html: 0xff6b9d, css: 0xff6b9d, scss: 0xff6b9d,
+      json: 0xffd93d, yaml: 0xffd93d, yml: 0xffd93d, toml: 0xffd93d, lock: 0xffd93d,
+      md: 0x95e1d3, txt: 0x95e1d3,
+      py: 0xc9b1ff, rb: 0xc9b1ff,
+      other: 0xff8a5c
+    };
+
+    // --- Init Three.js ---
+    function initScene() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0a0a1a);
+      scene.fog = new THREE.FogExp2(0x0a0a1a, 0.008);
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 30, 50);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.minDistance = 10;
+      controls.maxDistance = 200;
+
+      // Lights
+      const ambient = new THREE.AmbientLight(0x404060, 0.6);
+      scene.add(ambient);
+      const point = new THREE.PointLight(0x7c8aff, 1, 200);
+      point.position.set(0, 50, 0);
+      scene.add(point);
+      const point2 = new THREE.PointLight(0xff6b9d, 0.5, 150);
+      point2.position.set(-30, 20, 30);
+      scene.add(point2);
+
+      // Grid
+      const grid = new THREE.GridHelper(200, 40, 0x1a1a3a, 0x1a1a3a);
+      grid.position.y = -0.5;
+      scene.add(grid);
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      renderer.domElement.addEventListener('mousemove', onMouseMove);
+      renderer.domElement.addEventListener('click', onMouseClick);
+
+      animate();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+
+      // Gentle float animation
+      nodeMeshes.forEach((mesh, i) => {
+        if (mesh.userData.baseY !== undefined) {
+          mesh.position.y = mesh.userData.baseY + Math.sin(Date.now() * 0.001 + i * 0.5) * 0.15;
+        }
+      });
+
+      renderer.render(scene, camera);
+    }
+
+    // --- File color helper ---
+    function getFileColor(name, isDir) {
+      if (isDir) return FILE_COLORS.dir;
+      const ext = name.split('.').pop().toLowerCase();
+      return FILE_COLORS[ext] || FILE_COLORS.other;
+    }
+
+    function getFileExt(name) {
+      return name.split('.').pop().toLowerCase();
+    }
+
+    // --- Parse GitHub tree into hierarchy ---
+    function buildTree(items) {
+      const root = { name: '/', path: '', children: [], files: [], type: 'dir' };
+      const dirMap = { '': root };
+
+      // Sort so dirs come first
+      items.sort((a, b) => {
+        if (a.type === 'tree' && b.type !== 'tree') return -1;
+        if (a.type !== 'tree' && b.type === 'tree') return 1;
+        return a.path.localeCompare(b.path);
+      });
+
+      for (const item of items) {
+        const parts = item.path.split('/');
+        const name = parts[parts.length - 1];
+        const parentPath = parts.slice(0, -1).join('/');
+
+        // Ensure parent exists
+        if (!dirMap[parentPath]) {
+          const pp = parentPath.split('/');
+          let built = '';
+          for (const p of pp) {
+            const prev = built;
+            built = built ? built + '/' + p : p;
+            if (!dirMap[built]) {
+              const node = { name: p, path: built, children: [], files: [], type: 'dir' };
+              dirMap[built] = node;
+              if (dirMap[prev]) dirMap[prev].children.push(node);
+            }
+          }
+        }
+
+        if (item.type === 'tree') {
+          if (!dirMap[item.path]) {
+            const node = { name, path: item.path, children: [], files: [], type: 'dir' };
+            dirMap[item.path] = node;
+            if (dirMap[parentPath]) dirMap[parentPath].children.push(node);
+          }
+        } else {
+          const fileNode = { name, path: item.path, size: item.size || 0, type: 'file', sha: item.sha };
+          if (dirMap[parentPath]) dirMap[parentPath].files.push(fileNode);
+        }
+      }
+      return root;
+    }
+
+    // --- Layout: Radial tree for V1 ---
+    function layoutV1(tree) {
+      const nodes = [];
+      const edges = [];
+
+      function walk(node, depth, angleStart, angleEnd, parentPos) {
+        const angle = (angleStart + angleEnd) / 2;
+        const radius = depth * 12;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        const y = depth * 3;
+
+        const totalChildren = node.children.length + node.files.length;
+        const dirSize = Math.max(1.5, Math.min(4, 1 + totalChildren * 0.3));
+
+        const pos = new THREE.Vector3(x, y, z);
+        nodes.push({ ...node, pos, radius: dirSize, isDir: true });
+
+        if (parentPos) {
+          edges.push({ from: parentPos, to: pos, color: 0x7c8aff });
+        }
+
+        const childCount = node.children.length;
+        if (childCount > 0) {
+          const sliceSize = (angleEnd - angleStart) / childCount;
+          node.children.forEach((child, i) => {
+            walk(child, depth + 1, angleStart + sliceSize * i, angleStart + sliceSize * (i + 1), pos);
+          });
+        }
+      }
+
+      walk(tree, 0, 0, Math.PI * 2, null);
+      return { nodes, edges };
+    }
+
+    // --- Layout: V2 with files ---
+    function layoutV2(tree) {
+      const nodes = [];
+      const edges = [];
+
+      function walk(node, depth, angleStart, angleEnd, parentPos) {
+        const angle = (angleStart + angleEnd) / 2;
+        const radius = depth * 14;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        const y = depth * 3;
+
+        const totalChildren = node.children.length + node.files.length;
+        const dirSize = Math.max(1.8, Math.min(4, 1 + totalChildren * 0.3));
+
+        const pos = new THREE.Vector3(x, y, z);
+        nodes.push({ ...node, pos, radius: dirSize, isDir: true });
+
+        if (parentPos) {
+          edges.push({ from: parentPos, to: pos, color: 0x7c8aff });
+        }
+
+        // Place files around directory
+        const fileCount = node.files.length;
+        if (fileCount > 0) {
+          const fileRadius = dirSize + 2.5;
+          node.files.forEach((file, i) => {
+            const fAngle = angle + ((i / fileCount) - 0.5) * Math.PI * 0.8;
+            const fx = x + Math.cos(fAngle) * fileRadius;
+            const fz = z + Math.sin(fAngle) * fileRadius;
+            const fy = y + (Math.random() - 0.5) * 1.5;
+            const fPos = new THREE.Vector3(fx, fy, fz);
+            const fSize = Math.max(0.3, Math.min(1.2, Math.log10((file.size || 100) + 1) * 0.3));
+            nodes.push({ ...file, pos: fPos, radius: fSize, isDir: false });
+            edges.push({ from: pos, to: fPos, color: getFileColor(file.name, false) });
+          });
+        }
+
+        const childCount = node.children.length;
+        if (childCount > 0) {
+          const sliceSize = (angleEnd - angleStart) / childCount;
+          node.children.forEach((child, i) => {
+            walk(child, depth + 1, angleStart + sliceSize * i, angleStart + sliceSize * (i + 1), pos);
+          });
+        }
+      }
+
+      walk(tree, 0, 0, Math.PI * 2, null);
+
+      // V2: Add import/dependency edges between files
+      addImportEdges(nodes, edges);
+
+      return { nodes, edges };
+    }
+
+    // --- V2: Detect imports between files ---
+    function addImportEdges(nodes, edges) {
+      const fileNodes = nodes.filter(n => !n.isDir);
+      const fileMap = {};
+      fileNodes.forEach(n => { fileMap[n.path] = n; });
+
+      for (const file of fileNodes) {
+        const content = fileContents[file.path];
+        if (!content) continue;
+
+        // Find import/require statements
+        const importPatterns = [
+          /(?:import|from)\s+['"]\.?\/?([^'"]+)['"]/g,
+          /require\s*\(\s*['"]\.?\/?([^'"]+)['"]\s*\)/g,
+          /(?:from|import)\s+(\S+)/g
+        ];
+
+        for (const pat of importPatterns) {
+          let match;
+          while ((match = pat.exec(content)) !== null) {
+            const target = match[1];
+            // Try to resolve
+            for (const other of fileNodes) {
+              if (other.path === file.path) continue;
+              if (other.path.includes(target) || other.name.replace(/\.[^.]+$/, '') === target.replace(/\.[^.]+$/, '')) {
+                edges.push({ from: file.pos, to: other.pos, color: 0xff6b9d, dashed: true, isImport: true });
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // --- V3: Function-level analysis ---
+    function layoutV3(tree) {
+      const { nodes, edges } = layoutV2(tree);
+      const funcNodes = [];
+      const funcEdges = [];
+
+      const fileNodes = nodes.filter(n => !n.isDir);
+
+      for (const file of fileNodes) {
+        const content = fileContents[file.path];
+        if (!content) continue;
+        const ext = getFileExt(file.name);
+        if (!['js', 'ts', 'jsx', 'tsx', 'mjs', 'py', 'rb'].includes(ext)) continue;
+
+        const functions = extractFunctions(content, ext);
+        if (functions.length === 0) continue;
+
+        functions.forEach((fn, i) => {
+          const fAngle = (i / functions.length) * Math.PI * 2;
+          const fRadius = file.radius + 1.5;
+          const fPos = new THREE.Vector3(
+            file.pos.x + Math.cos(fAngle) * fRadius,
+            file.pos.y + 1 + i * 0.3,
+            file.pos.z + Math.sin(fAngle) * fRadius
+          );
+          funcNodes.push({
+            name: fn.name,
+            path: file.path + ':' + fn.name,
+            pos: fPos,
+            radius: 0.25,
+            isDir: false,
+            isFunction: true,
+            funcData: fn,
+            parentFile: file.path
+          });
+          funcEdges.push({ from: file.pos, to: fPos, color: 0xc9b1ff, thin: true });
+        });
+      }
+
+      // Cross-function call edges
+      const allFuncs = funcNodes;
+      for (const fn of allFuncs) {
+        const calls = fn.funcData.calls || [];
+        for (const callName of calls) {
+          const target = allFuncs.find(f => f.name === callName && f.parentFile !== fn.parentFile);
+          if (target) {
+            funcEdges.push({ from: fn.pos, to: target.pos, color: 0xffd93d, dashed: true, isFuncCall: true });
+          }
+        }
+      }
+
+      // DB/API indicators
+      for (const fn of allFuncs) {
+        const d = fn.funcData;
+        if (d.dbCalls) {
+          fn.dbIndicator = true;
+        }
+        if (d.apiCalls) {
+          fn.apiIndicator = true;
+        }
+      }
+
+      return { nodes: [...nodes, ...funcNodes], edges: [...edges, ...funcEdges] };
+    }
+
+    function extractFunctions(content, ext) {
+      const functions = [];
+      const lines = content.split('\n');
+
+      let patterns;
+      if (['py'].includes(ext)) {
+        patterns = [/def\s+(\w+)\s*\(/g, /class\s+(\w+)/g];
+      } else {
+        patterns = [
+          /(?:function|async function)\s+(\w+)\s*\(/g,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(?/g,
+          /(\w+)\s*(?::\s*function|\(.*\)\s*(?:=>|\{))/g,
+          /(?:export\s+(?:default\s+)?)?(?:function|async function)\s+(\w+)/g,
+        ];
+      }
+
+      const seen = new Set();
+      for (const pat of patterns) {
+        let m;
+        while ((m = pat.exec(content)) !== null) {
+          const name = m[1];
+          if (seen.has(name)) continue;
+          if (['if', 'for', 'while', 'switch', 'catch', 'return', 'const', 'let', 'var', 'new', 'import', 'export', 'from', 'require'].includes(name)) continue;
+          seen.add(name);
+
+          // Detect what this function calls
+          const fnStart = m.index;
+          const fnChunk = content.substring(fnStart, fnStart + 2000);
+          const calls = [];
+          const callPat = /(\w+)\s*\(/g;
+          let cm;
+          while ((cm = callPat.exec(fnChunk)) !== null) {
+            if (cm[1] !== name && !['if', 'for', 'while', 'switch', 'catch', 'return', 'console', 'Math', 'Object', 'Array', 'JSON', 'Promise', 'new', 'typeof', 'require', 'import'].includes(cm[1])) {
+              calls.push(cm[1]);
+            }
+          }
+
+          // DB/API detection
+          const dbCalls = /\b(query|execute|find|findOne|findMany|select|insert|update|delete|aggregate|collection|model|schema|mongoose|prisma|knex|sequelize|pool|sql|database|db\.|supabase|firebase)\b/i.test(fnChunk);
+          const apiCalls = /\b(fetch|axios|http|request|get|post|put|patch|delete|api|endpoint|url|xhr|ajax)\s*\(/i.test(fnChunk);
+
+          functions.push({ name, calls: [...new Set(calls)], dbCalls, apiCalls });
+        }
+      }
+      return functions;
+    }
+
+    // --- Render scene ---
+    function clearScene() {
+      nodeMeshes.forEach(m => scene.remove(m));
+      edgeLines.forEach(l => scene.remove(l));
+      labelSprites.forEach(s => scene.remove(s));
+      nodeMeshes = [];
+      edgeLines = [];
+      labelSprites = [];
+    }
+
+    function renderLayout(layout) {
+      clearScene();
+
+      const { nodes, edges } = layout;
+
+      // Edges
+      for (const edge of edges) {
+        const points = [edge.from, edge.to];
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        const mat = new THREE.LineBasicMaterial({
+          color: edge.color || 0x333366,
+          transparent: true,
+          opacity: edge.dashed ? 0.25 : 0.4,
+          linewidth: edge.thin ? 1 : 1
+        });
+        if (edge.dashed) {
+          const dashMat = new THREE.LineDashedMaterial({
+            color: edge.color || 0x333366,
+            transparent: true,
+            opacity: 0.3,
+            dashSize: 0.5,
+            gapSize: 0.3,
+          });
+          const line = new THREE.Line(geo, dashMat);
+          line.computeLineDistances();
+          line.userData = { edgeData: edge };
+          scene.add(line);
+          edgeLines.push(line);
+        } else {
+          const line = new THREE.Line(geo, mat);
+          line.userData = { edgeData: edge };
+          scene.add(line);
+          edgeLines.push(line);
+        }
+      }
+
+      // Nodes
+      for (const node of nodes) {
+        let geo, mat;
+
+        if (node.isFunction) {
+          geo = new THREE.OctahedronGeometry(node.radius);
+          let color = 0xc9b1ff;
+          if (node.dbIndicator) color = 0xff6b9d;
+          if (node.apiIndicator) color = 0xffd93d;
+          mat = new THREE.MeshPhongMaterial({
+            color,
+            emissive: color,
+            emissiveIntensity: 0.3,
+            transparent: true,
+            opacity: 0.85
+          });
+        } else if (node.isDir) {
+          geo = new THREE.BoxGeometry(node.radius, node.radius, node.radius);
+          mat = new THREE.MeshPhongMaterial({
+            color: FILE_COLORS.dir,
+            emissive: FILE_COLORS.dir,
+            emissiveIntensity: 0.15,
+            transparent: true,
+            opacity: 0.85
+          });
+        } else {
+          geo = new THREE.SphereGeometry(node.radius, 16, 16);
+          const color = getFileColor(node.name, false);
+          mat = new THREE.MeshPhongMaterial({
+            color,
+            emissive: color,
+            emissiveIntensity: 0.2,
+            transparent: true,
+            opacity: 0.85
+          });
+        }
+
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(node.pos);
+        mesh.userData = { nodeData: node, baseY: node.pos.y };
+        scene.add(mesh);
+        nodeMeshes.push(mesh);
+
+        // Labels for dirs and important files
+        if (node.isDir || (node.isFunction && currentVersion === 'v3')) {
+          const label = makeLabel(node.name, node.isFunction ? 0.6 : 1.0);
+          label.position.copy(node.pos);
+          label.position.y += node.radius + 0.8;
+          scene.add(label);
+          labelSprites.push(label);
+        }
+      }
+
+      // Add V3 legend items
+      if (currentVersion === 'v3') {
+        document.getElementById('legend').innerHTML = `
+          <div class="legend-item"><div class="legend-dot" style="background:#7c8aff"></div> Directory</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#4ecdc4"></div> JS/TS</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#ff6b9d"></div> HTML/CSS / DB Call</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#ffd93d"></div> Config / API Call</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#c9b1ff"></div> Function</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#ff8a5c"></div> Other</div>
+        `;
+      }
+    }
+
+    function makeLabel(text, scale = 1) {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = 256;
+      canvas.height = 64;
+      ctx.fillStyle = 'transparent';
+      ctx.fillRect(0, 0, 256, 64);
+      ctx.font = '24px SF Mono, Fira Code, monospace';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(text.length > 20 ? text.slice(0, 18) + '..' : text, 128, 40);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.7 });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(6 * scale, 1.5 * scale, 1);
+      return sprite;
+    }
+
+    // --- Mouse interaction ---
+    function onMouseMove(e) {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(nodeMeshes);
+
+      const tooltip = document.getElementById('tooltip');
+
+      if (intersects.length > 0) {
+        const mesh = intersects[0].object;
+        const data = mesh.userData.nodeData;
+
+        if (hoveredNode !== mesh) {
+          if (hoveredNode) {
+            hoveredNode.material.emissiveIntensity = hoveredNode.userData.nodeData.isDir ? 0.15 : 0.2;
+          }
+          hoveredNode = mesh;
+          mesh.material.emissiveIntensity = 0.6;
+          renderer.domElement.style.cursor = 'pointer';
+        }
+
+        tooltip.style.display = 'block';
+        tooltip.style.left = e.clientX + 15 + 'px';
+        tooltip.style.top = e.clientY + 15 + 'px';
+        tooltip.querySelector('.path').textContent = data.isFunction ? data.path : (data.path || data.name);
+        const sizeText = data.isFunction
+          ? (data.funcData.dbCalls ? 'DB ' : '') + (data.funcData.apiCalls ? 'API ' : '') + `calls: ${data.funcData.calls?.length || 0}`
+          : data.isDir
+          ? `${(data.children?.length || 0)} dirs, ${(data.files?.length || 0)} files`
+          : `${formatSize(data.size || 0)}`;
+        tooltip.querySelector('.size').textContent = sizeText;
+      } else {
+        if (hoveredNode) {
+          hoveredNode.material.emissiveIntensity = hoveredNode.userData.nodeData.isDir ? 0.15 : 0.2;
+          hoveredNode = null;
+          renderer.domElement.style.cursor = 'default';
+        }
+        tooltip.style.display = 'none';
+      }
+    }
+
+    function onMouseClick(e) {
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(nodeMeshes);
+
+      const panel = document.getElementById('info-panel');
+
+      if (intersects.length > 0) {
+        const data = intersects[0].object.userData.nodeData;
+        panel.style.display = 'block';
+        document.getElementById('info-title').textContent = data.name;
+
+        if (data.isFunction) {
+          document.getElementById('info-body').textContent =
+            `Function in ${data.parentFile}\n` +
+            (data.funcData.dbCalls ? 'Accesses database\n' : '') +
+            (data.funcData.apiCalls ? 'Makes API/HTTP calls\n' : '');
+          const fileList = document.getElementById('info-files');
+          fileList.innerHTML = '<div style="margin-top:4px;color:#7c8aff;font-size:11px">Calls:</div>';
+          (data.funcData.calls || []).forEach(c => {
+            fileList.innerHTML += `<div class="file-item">${c}()</div>`;
+          });
+        } else if (data.isDir) {
+          document.getElementById('info-body').textContent =
+            `${data.children?.length || 0} subdirectories, ${data.files?.length || 0} files`;
+          const fileList = document.getElementById('info-files');
+          fileList.innerHTML = '';
+          (data.files || []).forEach(f => {
+            fileList.innerHTML += `<div class="file-item">${f.name} (${formatSize(f.size)})</div>`;
+          });
+        } else {
+          document.getElementById('info-body').textContent =
+            `Size: ${formatSize(data.size || 0)}\nPath: ${data.path}`;
+          document.getElementById('info-files').innerHTML = '';
+
+          if (fileContents[data.path]) {
+            const preview = fileContents[data.path].substring(0, 500);
+            document.getElementById('info-files').innerHTML =
+              `<pre style="font-size:10px;color:rgba(255,255,255,0.4);white-space:pre-wrap;margin-top:8px;max-height:200px;overflow:auto">${escapeHtml(preview)}</pre>`;
+          }
+        }
+
+        selectedNode = intersects[0].object;
+      } else {
+        panel.style.display = 'none';
+        selectedNode = null;
+      }
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // --- GitHub API ---
+    async function fetchRepoTree(owner, repo) {
+      const loading = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      loading.classList.add('visible');
+      loadingText.textContent = 'Fetching repository tree...';
+
+      try {
+        // Get default branch
+        const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
+        if (!repoRes.ok) throw new Error(`Repo not found: ${repoRes.status}`);
+        const repoInfo = await repoRes.json();
+        const branch = repoInfo.default_branch;
+
+        // Get full tree
+        const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`);
+        if (!treeRes.ok) throw new Error(`Tree fetch failed: ${treeRes.status}`);
+        const treeData = await treeRes.json();
+
+        loadingText.textContent = `Found ${treeData.tree.length} items...`;
+
+        return { tree: treeData.tree, owner, repo, branch };
+      } finally {
+        loading.classList.remove('visible');
+      }
+    }
+
+    async function fetchFileContents(owner, repo, branch, files) {
+      const loading = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      loading.classList.add('visible');
+
+      const codeFiles = files.filter(f => {
+        const ext = f.path.split('.').pop().toLowerCase();
+        return ['js', 'ts', 'jsx', 'tsx', 'mjs', 'py', 'rb', 'html', 'css', 'json', 'md', 'txt', 'yaml', 'yml', 'toml'].includes(ext);
+      }).filter(f => (f.size || 0) < 100000); // Skip large files
+
+      let loaded = 0;
+      const batchSize = 5;
+
+      for (let i = 0; i < codeFiles.length; i += batchSize) {
+        const batch = codeFiles.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (file) => {
+          try {
+            const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${file.path}?ref=${branch}`, {
+              headers: { Accept: 'application/vnd.github.v3.raw' }
+            });
+            if (res.ok) {
+              fileContents[file.path] = await res.text();
+            }
+          } catch (e) { /* skip */ }
+          loaded++;
+          loadingText.textContent = `Loading files... ${loaded}/${codeFiles.length}`;
+        }));
+      }
+
+      loading.classList.remove('visible');
+    }
+
+    // --- Main load ---
+    window.loadRepo = async function() {
+      let input = document.getElementById('repo-input').value.trim();
+      // Parse URL or owner/repo
+      input = input.replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '').replace(/\.git$/, '');
+      const parts = input.split('/');
+      if (parts.length < 2) { alert('Enter owner/repo or GitHub URL'); return; }
+      const owner = parts[0], repo = parts[1];
+
+      document.getElementById('load-btn').disabled = true;
+      fileContents = {};
+
+      try {
+        const data = await fetchRepoTree(owner, repo);
+        repoData = data;
+        const tree = buildTree(data.tree);
+
+        // Unlock V2/V3 tabs
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('locked'));
+
+        // Render V1
+        currentVersion = 'v1';
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-version="v1"]').classList.add('active');
+
+        const layout = layoutV1(tree);
+        renderLayout(layout);
+
+        document.getElementById('legend').classList.add('visible');
+        document.getElementById('status').textContent =
+          `${data.tree.length} items | ${owner}/${repo} | Scroll to zoom, drag to rotate`;
+
+        // Preload file contents for V2/V3 in background
+        const codeFiles = data.tree.filter(f => f.type === 'blob');
+        fetchFileContents(owner, repo, data.branch, codeFiles);
+
+      } catch (e) {
+        alert('Error: ' + e.message);
+      }
+      document.getElementById('load-btn').disabled = false;
+    };
+
+    window.switchVersion = function(version) {
+      const tab = document.querySelector(`[data-version="${version}"]`);
+      if (tab.classList.contains('locked')) return;
+      if (!repoData) return;
+
+      currentVersion = version;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      const tree = buildTree(repoData.tree);
+
+      let layout;
+      if (version === 'v1') layout = layoutV1(tree);
+      else if (version === 'v2') layout = layoutV2(tree);
+      else layout = layoutV3(tree);
+
+      renderLayout(layout);
+
+      const labels = {
+        v1: 'Structure view - directories only',
+        v2: 'File view - showing imports & dependencies',
+        v3: 'Function view - DB calls (pink), API calls (yellow)'
+      };
+      document.getElementById('status').textContent =
+        `${repoData.tree.length} items | ${labels[version]}`;
+    };
+
+    // Enter key to load
+    document.getElementById('repo-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') window.loadRepo();
+    });
+
+    // Init
+    initScene();
+  </script>
+</body>
+</html>
